@@ -1,17 +1,24 @@
 {
-  "name": "video-host-api",
+  "name": "hostvideo-api",
   "version": "1.0.0",
+  "description": "API to upload a video to GitHub and return a raw URL",
+  "main": "hostvideo-api.js",
+  "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "index.js"
   },
+  "keywords": [
+    "github",
+    "video",
+    "api",
+    "upload",
+    "express"
+  ],
+  "author": "Minato",
+  "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "express-rate-limit": "^7.1.0",
-    "axios": "^1.6.0"
-  },
-  "engines": {
-    "node": "18.x"
-  },
-  "author": "MinatoCodes"
+    "@octokit/rest": "^20.0.0",
+    "axios": "^1.6.0",
+    "express": "^4.18.2"
+  }
 }
