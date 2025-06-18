@@ -1,7 +1,6 @@
 {
   "name": "video-host-api",
   "version": "1.0.0",
-  "author": "MinatoCodes",
   "scripts": {
     "start": "node server.js"
   },
@@ -13,4 +12,5 @@
   "engines": {
     "node": "18.x"
   },
+  "author": "MinatoCodes"
 }
