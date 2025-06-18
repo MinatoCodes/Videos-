@@ -1,136 +1,77 @@
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
-const rateLimit = require('express-rate-limit');
+import express from "express";
+import axios from "axios";
+import fs from "fs";
+import path from "path";
+import { Octokit } from "@octokit/rest";
+
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-// Metadata
-const metadata = {
-  author: 'MinatoCodes',
-  version: '1.0.0'
-};
-
-// GitHub API configuration
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const GITHUB_USERNAME = 'MinatoCodes';
-const GITHUB_REPO = 'Videos-';
-const GITHUB_BRANCH = 'main';
-const GITHUB_FILE_PATH = 'video';
-
-// Enable CORS for global access
-app.use(cors());
-
-// Rate limiting: max 100 requests per 15 minutes per IP
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: 'Too many requests from this IP, please try again later.'
-});
-app.use('/host', limiter);
-
-// Middleware to parse JSON bodies
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Validate video URL
-function isValidVideoUrl(url) {
-  try {
-    const parsedUrl = new URL(url);
-    const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm'];
-    return videoExtensions.some(ext => parsedUrl.pathname.toLowerCase().endsWith(ext));
-  } catch {
-    return false;
+// 🔐 GitHub config (set your repo and token here)
+const GITHUB_OWNER = "MinatoCodes";
+const GITHUB_REPO = "Videos-"; // ✅ must exist
+const GITHUB_BRANCH = "main";
+const GITHUB_TOKEN = "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"; // replace safely
+
+const octokit = new Octokit({ auth: GITHUB_TOKEN });
+
+app.get("/", (req, res) => {
+  res.send("✅ HostVideo API is running!");
+});
+
+// 🎯 Upload video endpoint
+app.post("/host", async (req, res) => {
+  const videoUrl = req.body.url || req.query.url;
+
+  if (!videoUrl) {
+    return res.status(400).json({ success: false, message: "Missing video URL." });
   }
-}
 
-// Endpoint to host video URL
-app.get('/host', async (req, res) => {
   try {
-    const { url } = req.query;
-
-    if (!url) {
-      return res.status(400).json({ error: 'Video URL is required' });
+    const head = await axios.head(videoUrl);
+    const size = parseInt(head.headers["content-length"] || 0);
+    if (size > 100 * 1024 * 1024) {
+      return res.status(400).json({ success: false, message: "File exceeds 100MB GitHub limit." });
     }
 
-    if (!isValidVideoUrl(url)) {
-      return res.status(400).json({ error: 'Invalid video URL. Must be a valid video file (e.g., .mp4, .mkv, .mov)' });
-    }
+    const fileName = `video_${Date.now()}.mp4`;
+    const localPath = path.join("/tmp", fileName);
+    const githubPath = `video/${fileName}`;
 
-    if (!GITHUB_TOKEN) {
-      return res.status(500).json({ error: 'GitHub token not configured' });
-    }
+    const response = await axios({ url: videoUrl, method: "GET", responseType: "stream" });
+    const writer = fs.createWriteStream(localPath);
+    response.data.pipe(writer);
 
-    // Fetch current videos.json from GitHub
-    let videos = [];
-    let sha;
-    try {
-      const response = await axios.get(
-        `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
-        {
-          headers: {
-            Authorization: `token ${GITHUB_TOKEN}`,
-            Accept: 'application/vnd.github.v3+json'
-          }
-        }
-      );
-      videos = JSON.parse(Buffer.from(response.data.content, 'base64').toString('utf-8'));
-      sha = response.data.sha;
-    } catch (error) {
-      if (error.response && error.response.status === 404) {
-        // File doesn't exist, initialize empty array
-        videos = [];
-      } else {
-        throw error;
-      }
-    }
-
-    // Add new video URL with metadata
-    const newVideo = {
-      id: videos.length + 1,
-      url,
-      timestamp: new Date().toISOString(),
-      region: req.headers['x-forwarded-for'] || req.ip || 'unknown',
-      author: metadata.author
-    };
-    videos.push(newVideo);
-
-    // Update videos.json in GitHub
-    await axios.put(
-      `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
-      {
-        message: `Add video URL ${url} by ${metadata.author}`,
-        content: Buffer.from(JSON.stringify(videos, null, 2)).toString('base64'),
-        branch: GITHUB_BRANCH,
-        sha: sha // Include SHA if file exists
-      },
-      {
-        headers: {
-          Authorization: `token ${GITHUB_TOKEN}`,
-          Accept: 'application/vnd.github.v3+json'
-        }
-      }
-    );
-
-    // Return hosted URL
-    const hostedUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/${GITHUB_FILE_PATH}`;
-    res.status(200).json({
-      message: 'Video URL hosted successfully',
-      video: newVideo,
-      hostedUrl,
-      author: metadata.author
+    await new Promise((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
     });
-  } catch (error) {
-    console.error('Error hosting video URL:', error.response ? error.response.data : error.message);
-    res.status(500).json({ error: 'Failed to host video URL' });
+
+    const content = fs.readFileSync(localPath, { encoding: "base64" });
+
+    await octokit.repos.createOrUpdateFileContents({
+      owner: GITHUB_OWNER,
+      repo: GITHUB_REPO,
+      path: githubPath,
+      message: `Upload via API: ${fileName}`,
+      content,
+      branch: GITHUB_BRANCH,
+    });
+
+    fs.unlinkSync(localPath);
+
+    const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${githubPath}`;
+    res.json({ success: true, url: rawUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// Root endpoint for UptimeRobot pings
-app.get('/', (req, res) => {
-  res.status(200).json({ message: 'Video Host API is running', author: metadata.author });
+app.listen(PORT, () => {
+  console.log(`🚀 HostVideo API is running on http://localhost:${PORT}`);
 });
-
-// Start the server
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+                                 
