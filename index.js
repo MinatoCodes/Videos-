@@ -1,11 +1,22 @@
-
 const express = require('express');
-const fs = require('fs').promises;
-const path = require('path');
+const axios = require('axios');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Metadata
+const metadata = {
+  author: 'MinatoCodes',
+  version: '1.0.0'
+};
+
+// GitHub API configuration
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_USERNAME = 'MinatoCodes
+const GITHUB_REPO = 'Videos-';
+const GITHUB_BRANCH = 'main';
+const GITHUB_FILE_PATH = 'video';
 
 // Enable CORS for global access
 app.use(cors());
@@ -20,18 +31,6 @@ app.use('/host', limiter);
 
 // Middleware to parse JSON bodies
 app.use(express.json());
-
-// Path to store video URLs
-const videoDataPath = path.join(__dirname, 'video', 'videos.json');
-
-// Ensure videos.json exists
-async function initializeVideosFile() {
-  try {
-    await fs.access(videoDataPath);
-  } catch {
-    await fs.writeFile(videoDataPath, JSON.stringify([]));
-  }
-}
 
 // Validate video URL
 function isValidVideoUrl(url) {
@@ -57,35 +56,78 @@ app.get('/host', async (req, res) => {
       return res.status(400).json({ error: 'Invalid video URL. Must be a valid video file (e.g., .mp4, .mkv, .mov)' });
     }
 
-    // Initialize videos.json if it doesn't exist
-    await initializeVideosFile();
+    if (!GITHUB_TOKEN) {
+      return res.status(500).json({ error: 'GitHub token not configured' });
+    }
 
-    // Read current videos with locking mechanism
-    let videos = JSON.parse(await fs.readFile(videoDataPath, 'utf-8'));
+    // Fetch current videos.json from GitHub
+    let videos = [];
+    let sha;
+    try {
+      const response = await axios.get(
+        `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
+        {
+          headers: {
+            Authorization: `token ${GITHUB_TOKEN}`,
+            Accept: 'application/vnd.github.v3+json'
+          }
+        }
+      );
+      videos = JSON.parse(Buffer.from(response.data.content, 'base64').toString('utf-8'));
+      sha = response.data.sha;
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        // File doesn't exist, initialize empty array
+        videos = [];
+      } else {
+        throw error;
+      }
+    }
 
     // Add new video URL with metadata
     const newVideo = {
       id: videos.length + 1,
       url,
       timestamp: new Date().toISOString(),
-      region: req.headers['x-forwarded-for'] || req.ip || 'unknown' // Approximate region via IP
+      region: req.headers['x-forwarded-for'] || req.ip || 'unknown',
+      author: metadata.author
     };
     videos.push(newVideo);
 
-    // Write back to file (concurrent-safe)
-    await fs.writeFile(videoDataPath, JSON.stringify(videos, null, 2));
+    // Update videos.json in GitHub
+    await axios.put(
+      `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
+      {
+        message: `Add video URL ${url} by ${metadata.author}`,
+        content: Buffer.from(JSON.stringify(videos, null, 2)).toString('base64'),
+        branch: GITHUB_BRANCH,
+        sha: sha // Include SHA if file exists
+      },
+      {
+        headers: {
+          Authorization: `token ${GITHUB_TOKEN}`,
+          Accept: 'application/vnd.github.v3+json'
+        }
+      }
+    );
 
     // Return hosted URL
-    const hostedUrl = `https://raw.githubusercontent.com/MinatoCodes/Videos-/main/video/videos.json`;
+    const hostedUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/${GITHUB_FILE_PATH}`;
     res.status(200).json({
       message: 'Video URL hosted successfully',
       video: newVideo,
-      hostedUrl
+      hostedUrl,
+      author: metadata.author
     });
   } catch (error) {
-    console.error('Error hosting video URL:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error hosting video URL:', error.response ? error.response.data : error.message);
+    res.status(500).json({ error: 'Failed to host video URL' });
   }
+});
+
+// Root endpoint for UptimeRobot pings
+app.get('/', (req, res) => {
+  res.status(200).json({ message: 'Video Host API is running', author: metadata.author });
 });
 
 // Start the server
