@@ -13,7 +13,7 @@ const metadata = {
 
 // GitHub API configuration
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const GITHUB_USERNAME = 'MinatoCodes
+const GITHUB_USERNAME = 'MinatoCodes';
 const GITHUB_REPO = 'Videos-';
 const GITHUB_BRANCH = 'main';
 const GITHUB_FILE_PATH = 'video';
