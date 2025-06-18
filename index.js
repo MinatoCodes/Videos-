@@ -23,8 +23,8 @@ app.get("/", (req, res) => {
 });
 
 // 🎯 Upload video endpoint
-app.post("/host", async (req, res) => {
-  const videoUrl = req.body.url || req.query.url;
+app.get("/host", async (req, res) => {
+  const videoUrl = req.query.url;
 
   if (!videoUrl) {
     return res.status(400).json({ success: false, message: "Missing video URL." });
